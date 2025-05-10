@@ -1,0 +1,32 @@
+# Archivos temporales y de sistema
+.DS_Store           # macOS
+Thumbs.db           # Windows
+.idea/              # Archivos de configuración de JetBrains/IntelliJ
+.vscode/            # Archivos de configuración de Visual Studio Code
+
+# Archivos compilados y binarios
+*.elf
+*.bin
+*.hex
+*.o
+*.a
+*.out
+
+# Archivos de backup de editores
+*.swp
+*.swo
+*.bak
+*.tmp
+
+# Archivos de configuración del IDE de Arduino
+*.cpp.*
+*.ino.*
+*.d
+*.o
+
+# Carpetas de la librería de Arduino
+libraries/
+
+# Configuración de la plataforma
+platformio.ini
+.vscode/
