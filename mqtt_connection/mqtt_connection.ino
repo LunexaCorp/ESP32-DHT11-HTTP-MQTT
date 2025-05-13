@@ -1,109 +1,90 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <DHT.h>
+#include <UtilidadesClima.h>
+#include <secrets.h>
 
-//PinOut DHT11
+
+//Configuración del sensor 
 #define DHT_PIN   19
 #define DHT_TYPE  DHT11
 DHT dht(DHT_PIN, DHT_TYPE);
 
 //Credenciales de red WiFi
-#define WIFI_SSID  "Yohan :)"
-#define WIFI_PSWD  "pandita19"
+const char* WIFI_SSID = Secrets::WIFI_SSID;
+const char* WIFI_PSWD = Secrets::WIFI_PSWD;
 
-//Credenciales del Adafruit IO
-#define IO_USERNAME    "tu_username"
-#define IO_KEY         "tu_key"
+//Datos de Adafruit IO
+const char* IO_USERNAME = Secrets::IO_USERNAME;
+const char* IO_KEY = Secrets::IO_KEY;
+const char* MQTT_BROKER = "io.adafruit.com";
+const int   MQTT_PORT = 1883;
+const char *CLIENT_ID = "esp32-client";
 
-// Broker MQTT de Adafruit IO
-const char *mqtt_broker   = "io.adafruit.com";
-const int   mqtt_port     = 1883;
-const char *client_id     = "esp32-client";
+// Feeds (Temas MQTT)
+const char* TOPIC_CLIMA_TEMP_C        = "parxita/feeds/clima.ambiente.temperatura_celsius";
+const char* TOPIC_CLIMA_TEMP_F        = "parxita/feeds/clima.ambiente.temperatura_fahrenheit";
+const char* TOPIC_CLIMA_TEMP_K        = "parxita/feeds/clima.ambiente.temperatura_kelvin";
+const char* TOPIC_CLIMA_TEMP_R        = "parxita/feeds/clima.ambiente.temperatura_rankine";
+const char* TOPIC_CLIMA_HUMEDAD_R       = "parxita/feeds/clima.ambiente.humedad_relativa";
+const char* TOPIC_CLIMA_HUMEDAD_A       = "parxita/feeds/clima.ambiente.humedad_absoluta";
+const char* TOPIC_CLIMA_PUNTO_ROCIO   = "parxita/feeds/clima.ambiente.punto_rocio_celsius";
+const char* TOPIC_CLIMA_SENS_TERM     = "parxita/feeds/clima.ambiente.sensacion_termica_celsius";
 
-//Topic MQTT
-const char *topic_temp = "parxita/feeds/temperatura";
-const char *topic_hume = "parxita/feeds/humedad";
 
-//Prototipos de funciones
-void wifiConnect (void);
-void mqttConnect (void);
-
+//Objetos de conexión
 //Objeto para manejar conexion IP para el ESP32
-WiFiClient espClient;
+WiFiClient wifiClient;
 //Objeto para manejar las conexiones y transferencias mediante MQTT
-PubSubClient clientMqtt(espClient);
+PubSubClient mqttClient(wifiClient);
 
-//Variables de aplicacion
-float tempC, tempF, humedad;
-char tempString[10];
-char humString[10];
-char dataJSON[100];
+//Funciones auxiliares
+void connectToWiFi();
+void connectToMQTT();
+void publishSensorData();
+void readAndSendDHTData();
 
 void setup() {
   Serial.begin(115200);
-  //Configuracion del sensor DHT11
   dht.begin();
-  //Conexion a WiFi en modo estacion
-  wifiConnect();
-  //Conexion MQTT
-  mqttConnect();
+  connectToWiFi();
+  connectToMQTT();
 }
 
 void loop() {
-  //Lectura del sensor DHT11
-  tempC = dht.readTemperature();     // °C
-  tempF = dht.readTemperature(true); // °F
-  humedad = dht.readHumidity();      // %
 
-  if(WL_CONNECTED == WiFi.status()) {
-    //Comunicacion MQTT
-    if(true == clientMqtt.connected()) {
+  if(WiFi.status() != WL_CONNECTED)
+    connectToWiFi();
 
-      // Convertir valores float a string
-      dtostrf(tempC, 6, 2, tempString); // 6 dígitos, 2 decimales
-      dtostrf(humedad, 6, 2, humString);
+  if(!mqttClient.connected())
+    connectToMQTT();
 
-      // Publicar cada uno en su feed
-      clientMqtt.publish(topic_temp, tempString);
-      clientMqtt.publish(topic_hume, humString);
+  mqttClient.loop();    // Mantener conexión MQTT
+  publishSensorData();  // Leer sensor y publicar datos
 
-      //Formatear los datos en JSON para Publicar en el broker
-      sprintf(dataJSON, "{\"temperatura_c\":%.2f,\"temperatura_f\":%.2f,\"humedad\":%.2f}", tempC, tempF, humedad);
-      Serial.printf("DATA PUB: %s \n\n", dataJSON);
+  delay(18000);         // Esperar 18 segundos
 
-    }
-    else {
-      //Reconexion MQTT
-      mqttConnect();
-    }
-    //Mantener la conexion actualizada
-    clientMqtt.loop();
-  }
-  else {
-    //Reconexion WiFi
-    wifiConnect();
-  }
-  delay(10000);
 }
 
 //****************************************************************************************
 //************************DESAROLLO DE FUNCIONES******************************************
 
-void wifiConnect (void) {
-  //Configuracion de WiFi en modo estacion
-  WiFi.mode(WIFI_STA);
+void connectToWiFi() {
+  Serial.print("Conectando a WiFi...");
   //Establecer el SSID y PSWD de la red WiFi
   WiFi.begin(WIFI_SSID, WIFI_PSWD);
-  Serial.print("ESP32 Conectando a red WiFi");
-  //Consultar el estado de conextion
-  while(WL_CONNECTED != WiFi.status()) {
+  //Configuracion de WiFi en modo estacion
+  WiFi.mode(WIFI_STA);
+  
+  //Consultar el estado de conexión
+  while(WiFi.status() != WL_CONNECTED) {
     delay(1000);
     Serial.print(".");
   }
-  Serial.print("ESP32 Conexion Lista!!!");
-  Serial.println(" ");
+
+  Serial.println("\nWiFi conectado");
   Serial.print("IP Address: ");
-  Serial.print(WiFi.localIP());
+  Serial.println(WiFi.localIP());
   Serial.print(" Access Point: ");
   Serial.print(WiFi.SSID());
   Serial.print(" - ");
@@ -111,22 +92,72 @@ void wifiConnect (void) {
 }
 
 //Función para conectar a MQTT (Adafruit IO)
-void mqttConnect(void){
-  clientMqtt.setServer(mqtt_broker, mqtt_port);
+void connectToMQTT(){
+  mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
   
-  while(!clientMqtt.connected()){
-    Serial.print("Intentando conexión MQTT...");
+  while(!mqttClient.connected()){
+    Serial.print("Conectando a MQTT...");
 
     //Intentar conectar con el nombre de cliente y credenciales
-    if(clientMqtt.connect(client_id, IO_USERNAME, IO_KEY)){
-      Serial.println("Conectando a MQTT");
+    if(mqttClient.connect(CLIENT_ID, IO_USERNAME, IO_KEY)){
+      Serial.println("¡conectado!");
     }else{
-      Serial.print("Fallo en la conexión. Estado: ");
-      Serial.println(clientMqtt.state());
+      Serial.print(" Error (Estado: ");
+      Serial.print(mqttClient.state());
+      Serial.println("). Reintentando...");
       delay(2000);
     }
   }
 }
 
+void publishSensorData(){
+  float temperaturaCelsius = dht.readTemperature();
+  float humedadRelativa = dht.readHumidity();
+  
+
+  if(isnan(temperaturaCelsius) || isnan(humedadRelativa)) {
+    Serial.println("Error al leer el sensor");
+    return;
+  }
+
+  float puntoRocio = calcularPuntoRocio(temperaturaCelsius, humedadRelativa);
+  float sensacionTermica = calcularSensacionTermica(temperaturaCelsius, humedadRelativa);
+  String temperaturaFahrenheit = convertirDeCelsiusA(FAHRENHEIT, false, temperaturaCelsius);
+  String temperaturaKelvin     = convertirDeCelsiusA(KELVIN, false, temperaturaCelsius);
+  String temperaturaRankine    = convertirDeCelsiusA(RANKINE, false, temperaturaCelsius);
+  float humedadAbsoluta = calcularHumedadAbsoluta(temperaturaCelsius, humedadRelativa);
+
+  char tempCStr[8], tempFStr[8], tempKStr[8], tempRStr[8];
+  char humedadRStr[8], puntoRocioStr[8], sensTermStr[8];
+  char humedadAStr[8];
 
 
+  // Convertir los datos float a cadenas de texto con 2 decimales
+  dtostrf(temperaturaCelsius, 4, 2, tempCStr);
+  temperaturaFahrenheit.toCharArray(tempFStr, sizeof(tempFStr));
+  temperaturaKelvin.toCharArray(tempKStr, sizeof(tempKStr));
+  temperaturaRankine.toCharArray(tempRStr, sizeof(tempRStr));
+  dtostrf(humedadRelativa, 4, 2, humedadRStr);
+  dtostrf(humedadAbsoluta, 4, 2, humedadAStr);
+  dtostrf(puntoRocio, 4, 2, puntoRocioStr);
+  dtostrf(sensacionTermica, 4, 2, sensTermStr);
+
+  // Publicar datos a los feeds MQTT respectivos
+  mqttClient.publish(TOPIC_CLIMA_TEMP_C, tempCStr);
+  mqttClient.publish(TOPIC_CLIMA_TEMP_F, tempFStr);
+  mqttClient.publish(TOPIC_CLIMA_TEMP_K, tempKStr);
+  mqttClient.publish(TOPIC_CLIMA_TEMP_R, tempRStr);
+  mqttClient.publish(TOPIC_CLIMA_HUMEDAD_R, humedadRStr);
+  mqttClient.publish(TOPIC_CLIMA_HUMEDAD_A, humedadAStr);
+  mqttClient.publish(TOPIC_CLIMA_PUNTO_ROCIO, puntoRocioStr);
+  mqttClient.publish(TOPIC_CLIMA_SENS_TERM, sensTermStr);
+
+  // Mensaje de confirmación por consola
+  Serial.println("📡 Datos enviados vía MQTT:");
+  Serial.printf("  - Temp: %s °C | %s °F | %s K | %s R\n", tempCStr, tempFStr, tempKStr, tempRStr);
+  Serial.printf("  - Humedad relativa: %s %%\n", humedadRStr);
+  Serial.printf("  - Humedad absoluta: %s %%\n", humedadAStr);
+  Serial.printf("  - Punto de rocío: %s °C\n", puntoRocioStr);
+  Serial.printf("  - Sensación térmica: %s °C\n", sensTermStr);
+  
+}

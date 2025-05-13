@@ -30,3 +30,7 @@ libraries/
 # Configuración de la plataforma
 platformio.ini
 .vscode/
+
+# Ignorar archivo de secretos
+secrets.h
+/include/secrets.h
