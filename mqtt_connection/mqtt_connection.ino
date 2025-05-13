@@ -2,8 +2,7 @@
 #include <PubSubClient.h>
 #include <DHT.h>
 #include <UtilidadesClima.h>
-#include <secrets.h>
-
+#include "../include/secrets.h"
 
 //Configuración del sensor 
 #define DHT_PIN   19
